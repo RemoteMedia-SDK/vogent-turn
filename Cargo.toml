@@ -1,0 +1,50 @@
+[package]
+name = "vogent-turn-plugin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone workspace — fully decoupled from any parent so the plugin's
+# `ort` pin doesn't unify against the host's.
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = 0
+
+[profile.dev]
+opt-level = 1
+debug = 1
+incremental = true
+
+[lib]
+name = "vogent_turn_plugin"
+crate-type = ["cdylib"]
+
+# Path-3 hand-rolled plugin: depends ONLY on the skinny
+# `remotemedia-plugin-sdk` umbrella. Does NOT link `remotemedia-core` —
+# that's what lets VogentTurnOnnxNode + its ort dependency be removed
+# from the host's core crate without changing this plugin's surface.
+[dependencies]
+remotemedia-plugin-sdk = { git = "https://github.com/RemoteMedia-SDK/remotemedia-sdk.git", branch = "main" }
+abi_stable = "0.11"
+
+async-trait = "0.1"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+tracing = "0.1"
+
+# Pin `ort` directly. Matches host workspace's =2.0.0-rc.12 for
+# behavioural parity; standalone workspace prevents cross-tree
+# unification anyway.
+ort = { version = "=2.0.0-rc.12", features = ["half", "download-binaries"] }
+
+# fp16 logit extraction from the fp16 graph variant.
+half = "2.1"
+
+# SmolLM-135M-Instruct tokenizer + Whisper-Tiny mel filterbank.
+tokenizers = "0.20"
+rustfft = "6.2"

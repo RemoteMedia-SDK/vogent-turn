@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0)'
+        required: true
+
+jobs:
+  release:
+    uses: RemoteMedia-SDK/remotemedia-sdk/.github/workflows/build-plugin.yml@main
+    with:
+      crate-name:   vogent-turn-plugin
+      display-name: vogent-turn
+      tag:          ${{ inputs.tag || github.ref_name }}
+    permissions:
+      contents: write

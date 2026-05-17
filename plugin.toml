@@ -1,0 +1,29 @@
+# VogentTurnOnnxNode as a standalone Path 3 cdylib plugin.
+#
+# Vogent-Turn-80M (Whisper-Tiny encoder + SmolLM-135M + binary head) for
+# conversational turn-end detection. Pipeline wiring:
+#
+#   FastResampleNode(16kHz mono f32) → VogentTurnOnnxNode → ...
+#
+# Optional text context arrives as `RuntimeData::Json({"prev","curr"})`
+# on the same input port. VAD-shape Json events
+# (`{"is_speech_start":true}` / `{"is_speech_end":true}`) drive the
+# armed-gate + veto logic.
+#
+# Consumer manifest reference:
+#
+#   "plugins": ["vogent-turn@v0.1.0"]
+#       (canonical-org shorthand → github.com/RemoteMedia-SDK/vogent-turn)
+#
+#   "plugins": ["./plugins/libvogent_turn_plugin.so"]
+#       (local path)
+
+[plugin]
+name        = "vogent-turn"
+version     = "0.1.0"
+language    = "rust"
+description = "Vogent Turn-80M conversational turn-end detection (Whisper-Tiny + SmolLM-135M ONNX) — standalone Rust cdylib plugin"
+
+[rust]
+node_types    = ["VogentTurnOnnxNode"]
+asset_pattern = "lib{name}-{arch}-{os}.{ext}"
