@@ -48,3 +48,10 @@ half = "2.1"
 # SmolLM-135M-Instruct tokenizer + Whisper-Tiny mel filterbank.
 tokenizers = "0.20"
 rustfft = "6.2"
+
+[patch."https://github.com/RemoteMedia-SDK/remotemedia-sdk.git"]
+remotemedia-plugin-sdk = { path = "../remotemedia-plugin-sdk/crates/plugin-sdk" }
+remotemedia-traits = { path = "../remotemedia-plugin-sdk/crates/traits" }
+remotemedia-types = { path = "../remotemedia-plugin-sdk/crates/types" }
+loadable-node-abi = { path = "../remotemedia-plugin-sdk/crates/loadable-node-abi" }
+

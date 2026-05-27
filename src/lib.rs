@@ -36,6 +36,7 @@ use remotemedia_plugin_sdk::abi_stable::sabi_trait::TD_Opaque;
 use remotemedia_plugin_sdk::abi_stable::std_types::{ROk, RResult, RString};
 use remotemedia_plugin_sdk::adapter::StreamingNodeFfiAdapter;
 use remotemedia_plugin_sdk::traits::streaming::AsyncStreamingNode;
+use remotemedia_plugin_sdk::traits::VoiceActivityDetectorBackend;
 use remotemedia_plugin_sdk::types::{ControlMessageType, Error, RuntimeData};
 use remotemedia_plugin_sdk::{FfiNodeBox, FfiNodeFactory, FfiNode_TO};
 
@@ -910,6 +911,54 @@ impl AsyncStreamingNode for VogentTurnOnnxNode {
                 Ok(1)
             }
         }
+    }
+}
+
+impl VoiceActivityDetectorBackend for VogentTurnOnnxNode {
+    fn reset_buffers(&self, session_id: &str) {
+        let mut sessions = self.sessions.lock();
+        sessions.insert(session_id.to_string(), SessionState::new());
+    }
+
+    fn evaluate_veto(&self, session_id: &str, audio_samples: &[f32]) -> Result<bool, Error> {
+        let handle = tokio::runtime::Handle::try_current()
+            .map_err(|e| Error::Execution(format!("No active tokio runtime thread: {e}")))?;
+        
+        handle.block_on(async {
+            let backend = self.ensure_backend().await?;
+            
+            let snapshot;
+            let input_ids;
+            {
+                let mut sessions = self.sessions.lock();
+                let state = sessions
+                    .entry(session_id.to_string())
+                    .or_insert_with(SessionState::new);
+                state.append_audio(audio_samples);
+                
+                if state.filled < 80000 {
+                    return Ok(true); // Veto turn end if buffer not sufficiently filled yet
+                }
+                
+                snapshot = state.snapshot().ok_or_else(|| {
+                    Error::Execution("Failed to extract audio snapshot".into())
+                })?;
+                
+                input_ids = match &state.cached_tokens {
+                    Some((p, c, ids)) if p == &state.prev_line && c == &state.curr_line => ids.clone(),
+                    _ => {
+                        let prompt = text::build_prompt(&state.prev_line, &state.curr_line);
+                        let ids = text::encode(&backend.tokenizer, &prompt)?;
+                        state.cached_tokens = Some((state.prev_line.clone(), state.curr_line.clone(), ids.clone()));
+                        ids
+                    }
+                };
+            }
+            
+            let (_p_cont, p_end) = backend.predict_probs_with_ids(&snapshot, &input_ids)?;
+            let veto = p_end < self.config.threshold;
+            Ok(veto)
+        })
     }
 }
 
