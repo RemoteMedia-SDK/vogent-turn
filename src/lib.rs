@@ -36,7 +36,7 @@ use remotemedia_plugin_sdk::abi_stable::sabi_trait::TD_Opaque;
 use remotemedia_plugin_sdk::abi_stable::std_types::{ROk, RResult, RString};
 use remotemedia_plugin_sdk::adapter::StreamingNodeFfiAdapter;
 use remotemedia_plugin_sdk::traits::streaming::AsyncStreamingNode;
-use remotemedia_plugin_sdk::types::{Error, RuntimeData};
+use remotemedia_plugin_sdk::types::{ControlMessageType, Error, RuntimeData};
 use remotemedia_plugin_sdk::{FfiNodeBox, FfiNodeFactory, FfiNode_TO};
 
 use ort::execution_providers::{
@@ -554,6 +554,9 @@ impl VogentTurnOnnxNode {
                 .entry(session_key.to_string())
                 .or_insert_with(SessionState::new);
             state.append_audio(samples);
+            if state.filled < 80000 { // 5.0s blanking at 16kHz
+                return Ok(0);
+            }
             if !state.throttle_passed(self.config.throttle_ms) {
                 return Ok(0);
             }
@@ -688,7 +691,13 @@ impl VogentTurnOnnxNode {
                     speech_end_force_drop = false;
                     state.armed = false;
                 } else {
-                    let audio = state.snapshot().unwrap_or_default();
+                    let mut audio = state.snapshot().unwrap_or_default();
+                    if audio.len() < mel::WINDOW_SAMPLES {
+                        let pad_len = mel::WINDOW_SAMPLES - audio.len();
+                        let mut padded = vec![0.0_f32; pad_len];
+                        padded.extend(audio);
+                        audio = padded;
+                    }
                     let cached_ids = match &state.cached_tokens {
                         Some((p, c, ids))
                             if p == &state.prev_line && c == &state.curr_line =>
@@ -699,14 +708,10 @@ impl VogentTurnOnnxNode {
                     };
                     let prev_line = state.prev_line.clone();
                     let curr_line = state.curr_line.clone();
-                    veto_inputs = if audio.len() == mel::WINDOW_SAMPLES {
-                        Some(VetoInputs {
-                            audio,
-                            input_ids: cached_ids.unwrap_or_default(),
-                        })
-                    } else {
-                        None
-                    };
+                    veto_inputs = Some(VetoInputs {
+                        audio,
+                        input_ids: cached_ids.unwrap_or_default(),
+                    });
                     let _ = (prev_line, curr_line);
                     speech_end_force_drop = false;
                     state.armed = false;
@@ -763,6 +768,10 @@ impl VogentTurnOnnxNode {
                 }
                 match backend.predict_probs_with_ids(&audio, &input_ids) {
                     Ok((_p_cont, p_end)) => {
+                        tracing::info!(
+                            "VogentTurnOnnxNode: fresh inference on speech_end succeeded, prob_endpoint = {}",
+                            p_end
+                        );
                         let mut sessions = self.sessions.lock();
                         if let Some(state) = sessions.get_mut(session_key) {
                             state.last_p_endpoint = Some(p_end);
@@ -811,11 +820,20 @@ impl VogentTurnOnnxNode {
             emitted += 1;
         }
         if vetoed_end {
-            tracing::debug!(
-                target: "vogent_turn",
+            tracing::info!(
                 p_endpoint = ?fresh_p_endpoint,
                 "VogentTurnOnnxNode: vetoed VAD speech_end (model disagrees)"
             );
+            callback(RuntimeData::ControlMessage {
+                message_type: ControlMessageType::CancelSpeculation {
+                    from_timestamp: 0,
+                    to_timestamp: 0,
+                },
+                segment_id: None,
+                timestamp_ms: 0,
+                metadata: serde_json::Value::Null,
+            })?;
+            emitted += 1;
         }
         Ok(emitted)
     }
@@ -887,7 +905,10 @@ impl AsyncStreamingNode for VogentTurnOnnxNode {
                 Ok(0)
             }
             RuntimeData::Json(v) => self.handle_text_state_update(&v, &key, &mut callback).await,
-            _ => Ok(0),
+            other => {
+                callback(other)?;
+                Ok(1)
+            }
         }
     }
 }
